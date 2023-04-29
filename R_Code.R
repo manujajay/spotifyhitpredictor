@@ -1,6 +1,5 @@
 ---
-title: "Spotify Hit Predictor - Group 27"
-author: "Group 27"
+title: "Spotify Hit Predictor"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -474,6 +473,6 @@ AUCDanceability@y.values
 > Building a model is great, but the actual commercial use of these models comes in its prediction power (found using K-fold cross validation on our datasets). So we can use the 2010 model to predict which songs will be successful, invest in those artists, diagnose why some artists are not ‘making it’ and advise clients on how to improve their success in music. 
 We can also cater to different audiences - if a singer is trying to appeal to the “boomer generation” that listens to 90’s songs, we now know to just increase the danceability (as defined in our project as high tempo amongst other variables). 
 
-> What went wrong, how we can improve, and advice to future students: Conducting a logistic regression was new to all of us. We had to explore, find new information, meet with Sebastian to get advice, and iteratively build on our model. On the actual project, song tastes change all the time! We tried to capture this by adding a ‘time’ element to our analysis, but sometimes, people change their tastes every 2-3 years, not by decade. If we had an entire year to build this project, we could have dived a little deeper: deciphering more granular trends as well as genre-by-genre analysis.
+> What went wrong, how we can improve, and advice: On the actual project, song tastes change all the time! We tried to capture this by adding a ‘time’ element to our analysis, but sometimes, people change their tastes every 2-3 years, not by decade. If we had an entire year to build this project, we could have dived a little deeper: deciphering more granular trends as well as genre-by-genre analysis.
 
 > Thank you so much for going through this journey of exploring what makes a song successful with us. We hope this inspires you to take this project to the next level and explore even deeper trend in this amazing and important industry of music. 
