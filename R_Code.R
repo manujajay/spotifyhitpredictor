@@ -1,0 +1,479 @@
+---
+title: "Spotify Hit Predictor - Group 27"
+author: "Group 27"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    highlight: zenburn
+    theme: flatly
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    code_folding: show
+---
+
+# Introduction
+
+> In this project we set out to analyse the variables contributing to the success of any one song. We aim to build a model from data obtained via Spotify to predict the factors that will make a song successful in the future decade. We will also perform a decade-by-decade analysis of how our these variables trended over time. 
+
+> The key questions we will answer are;
+
+> 1. What variables matter most when it comes to a song’s success?  
+
+> 2. How have these variables “varied” over time? 😉
+
+> 3. Can we predict the potential success of a new song? 
+
+> 4. If you were a singer or a production company, and you came to us, can we advise you? 
+
+> We will be regressing a "target" variable which is binary in nature and takes the value of 1 if a song is a hit and 0 if a song is a flop (based on billboard hit list charts). Since this variable is binary, a simple linear regression is a poor fit (as illustrated in later sections) and thus we use a generalized linear model (glm) specifically, a logit model - a logistic regression. 
+
+> In order to construct this regression, we will regress our target variable on a few important explanatory variables including Danceability, Energy, Key, among others. We will do this for 3 decades 1960-1970, 1990-2000, and 2010-2019. By eliminating insignificant variables for each model, we will then arrive at 3 optimized logistic regression models for each decade and we will intepret those results. 
+
+> Finally, we will construct a prediction model using k-fold cross validation, and test the accuracy for each of our 3 models. We will illustrate this accuracy by also constructing confusion matrices, and ROC curves, and calculating the area under the ROC curves for each model. 
+
+> In the end, due to high accuracy of our 2010-2019 model, we will recommend that model for future artists to improve their chances of success by improving variables liek Danceability, which have been important throughout time, but also optimizing time siganture and loudness to create the perfect song. 
+
+
+
+```{r load-libraries, echo=FALSE}
+
+library(tidyverse) # the usual stuff: dplyr, readr, and other goodies
+library(lubridate) # to handle dates
+library(GGally) # for correlation-scatter plot matrix
+library(ggfortify) # to produce residual diagnostic plots
+library(rsample) # to split dataframe in training- & testing sets
+library(janitor) # clean_names()
+library(broom) # use broom:augment() to get tidy table with regression output, residuals, etc
+library(huxtable) # to get summary table of all models produced
+library(kableExtra) # for formatting tables
+library(moderndive) # for getting regression tables
+library(skimr) # for skim
+library(mosaic)
+library(leaflet) # for interactive HTML maps
+library(sandwich) #marginal effects
+library(lmtest) #marginal effects
+library(zoo) #marginal effects
+library(MASS) #marginal effects
+library(mfx) #marginal effects
+library(betareg) #marginal effects
+```
+
+# Data Wrangling
+
+> We first accessed data via Spotify API through a Github repository. We then imported the data as CSV, cleaned names, and got dataset ready. From there we explored 3 decades: 1960-1970, 1990-2000, and 2010-2019 - created 3 separate logistic regression models. For each we took away the insignificant variables (using P-values) and created best possible regression models for each decade
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data import and inspection
+
+```{r Loading Data}
+#Loafing every decade takes way too long ~8000 observations in each is a huge dataset. So, we will compare just 1960 and 2010. And also 1990. Then we will build a predictive model with each. And then we will try and predict and see which one is best. 
+
+songs_decade_1960 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-60s.csv") %>% 
+  clean_names()
+
+#songs_decade_1970 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-70s.csv") %>% 
+  #clean_names()
+
+#songs_decade_1980 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-80s.csv") %>% 
+  #clean_names()
+
+songs_decade_1990 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-90s.csv") %>% 
+  clean_names()
+
+  
+#ongs_decade_2000 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-00s.csv") %>% 
+  #clean_names()
+
+songs_decade_2010 <- read_csv("https://raw.githubusercontent.com/fortyTwo102/hitpredictor-decade-util/master/Database/The%20Spotify%20Hit%20Predictor%20Dataset/dataset-of-10s.csv") %>% 
+  clean_names()
+
+head(songs_decade_1960)
+head(songs_decade_1990)
+head(songs_decade_2010)
+
+```
+
+```{r Variables}
+
+# - track: The Name of the track.
+# 
+# - artist: The Name of the Artist.
+# 
+# - uri: The resource identifier for the track.
+# 
+# - danceability: Danceability describes how suitable a track is for dancing based on a combination of musical elements including tempo, rhythm stability, beat strength, and overall regularity. A value of 0.0 is least danceable and 1.0 is most danceable. 
+# 
+# - energy: Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy. For example, death metal has high energy, while a Bach prelude scores low on the scale. Perceptual features contributing to this attribute include dynamic range, perceived loudness, timbre, onset rate, and general entropy. 
+# 
+# - key: The estimated overall key of the track. Integers map to pitches using standard Pitch Class notation. E.g. 0 = C, 1 = C?/D?, 2 = D, and so on. If no key was detected, the value is -1.
+# 
+# - loudness: The overall loudness of a track in decibels (dB). Loudness values are averaged across the entire track and are useful for comparing relative loudness of tracks. Loudness is the quality of a sound that is the primary psychological correlate of physical strength (amplitude). Values typical range between -60 and 0 db. 
+# 
+# - mode: Mode indicates the modality (major or minor) of a track, the type of scale from which its melodic content is derived. Major is represented by 1 and minor is 0.
+# 
+# - speechiness: Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording (e.g. talk show, audio book, poetry), the closer to 1.0 the attribute value. Values above 0.66 describe tracks that are probably made entirely of spoken words. Values between 0.33 and 0.66 describe tracks that may contain both music and speech, either in sections or layered, including such cases as rap music. Values below 0.33 most likely represent music and other non-speech-like tracks. 
+# 
+# - acousticness: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. 1.0 represents high confidence the track is acoustic. The distribution of values for this feature look like this:
+# 
+# - instrumentalness: Predicts whether a track contains no vocals. “Ooh” and “aah” sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly “vocal”. The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0. The distribution of values for this feature look like this:
+# 
+# - liveness: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live. A value above 0.8 provides strong likelihood that the track is live.
+# 
+# - valence: A measure from 0.0 to 1.0 describing the musical positiveness conveyed by a track. Tracks with high valence sound more positive (e.g. happy, cheerful, euphoric), while tracks with low valence sound more negative (e.g. sad, depressed, angry).
+# 
+# - tempo: The overall estimated tempo of a track in beats per minute (BPM). In musical terminology, tempo is the speed or pace of a given piece and derives directly from the average beat duration. 
+# 
+# - duration_ms:  The duration of the track in milliseconds.
+# 
+# - time_signature: An estimated overall time signature of a track. The time signature (meter) is a notational convention to specify how many beats are in each bar (or measure).
+# 
+# - chorus_hit: This the the author's best estimate of when the chorus would start for the track. Its the timestamp of the start of the third section of the track. This feature was extracted from the data received by the API call for Audio Analysis of that particular track.
+# 
+# - sections: The number of sections the particular track has. This feature was extracted from the data received by the API call for Audio Analysis of that particular track.
+# 
+# - target: The target variable for the track. It can be either '0' or '1'. '1' implies that this song has featured in the weekly list (Issued by Billboards) of Hot-100 tracks in that decade at least once and is therefore a 'hit'. '0' Implies that the track is a 'flop'.
+# 
+#       The author's condition of a track being 'flop' is as follows:
+# 
+#         - The track must not appear in the 'hit' list of that decade.
+#         - The track's artist must not appear in the 'hit' list of that decade.
+#         - The track must belong to a genre that could be considered non-mainstream and / or avant-garde. 
+#         - The track's genre must not have a song in the 'hit' list.
+#         - The track must have 'US' as one of its markets.
+
+```
+
+# Explaratory Data Analysis (EDA)
+## Checking raw values and computing summary statistics
+
+```{r Browsing the Data}
+
+head(songs_decade_1960)
+summary(songs_decade_1960)
+str(songs_decade_1960)
+
+head(songs_decade_1990)
+summary(songs_decade_1990)
+str(songs_decade_1990)
+
+head(songs_decade_2010)
+summary(songs_decade_2010)
+str(songs_decade_2010)
+skim(songs_decade_2010)
+
+```
+
+> There are no NA values or missing values here as seen above. 
+
+## Creating informative visualizations
+
+```{r Exploratory Data Analysis 1}
+library(ggplot2)
+ggplot(songs_decade_1960, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  coord_cartesian(ylim = c(0,1))
+
+ggplot(songs_decade_1990, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  coord_cartesian(ylim = c(0,1))
+
+
+ggplot(songs_decade_2010, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  coord_cartesian(ylim = c(0,1))
+```
+
+> Using Geom_point we first have a glance at the distribution of the danceability and how it may be related to success. We can roughly see that even as far away as 1960, a song with a low danceability was much more likley to be a flop (target = 0) than a success, as there are no points on target = 1 up until a danceability score of around 0.125, but there are points on target = 0 at low danceability scores.  
+
+> Using Geom_smooth, we see that as danceability increases, the likelihood of success in the song seems to be roughly rising. However, this model is not really a good fit, and violates some assumptions such as homoskedasticity. 
+
+```{r Exploratory Data Analysis 2}
+library(ggplot2)
+ggplot(songs_decade_1960, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "glm", se = FALSE, method.args = list(family = "binomial"))
+
+ggplot(songs_decade_1990, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "glm", se = FALSE, method.args = list(family = "binomial"))
+
+ggplot(songs_decade_2010, aes(danceability, target))+
+  geom_point() + 
+  geom_smooth(method = "glm", se = FALSE, method.args = list(family = "binomial"))
+
+```
+
+> By obtaining a binomial logistic regression line, we get a much better fit. In this scenario, for a song that has a danceability value that corresponds to a target value closer to 1 than 0 we would predict that that song would be a success. And if the target value was closer to 0 than to 1 we would predict that that song would be a flop.
+
+# Logistic Regression Analysis
+
+> In this section, we built our models, and interpreted log-odds and converted it to the more readable “odds ratios”. We also go on to interpret confidence intervals, visualize our results, and conduct a Wald Test for each of our models to test their fits. This will finally lead to the perfect segway into building prediction models - using “k-fold cross validation” (an advanced version of cross validation). This is training testing datasets on steroids: essentially splitting the dataset k times. 
+
+
+## Model building
+
+> Note that our ideal model should look something like this: 
+
+> glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_XXXX, family= "binomial")
+
+> We will first build a base model with just Danceability, and then we will take it forward to the full model from there. 
+
+
+```{r Danceability Model}
+
+danceabilityModel_1960 <- glm(target ~ danceability, data = songs_decade_1960, family= "binomial")
+summary(danceabilityModel_1960)
+exp(coef(danceabilityModel_1960))
+exp(confint(danceabilityModel_1960))
+
+danceabilityModel_1990 <- glm(target ~ danceability, data = songs_decade_1990, family= "binomial")
+summary(danceabilityModel_1990)
+exp(coef(danceabilityModel_1990))
+exp(confint(danceabilityModel_1990))
+
+danceabilityModel_2010 <- glm(target ~ danceability, data = songs_decade_2010, family= "binomial")
+summary(danceabilityModel_2010)
+exp(coef(danceabilityModel_2010))
+exp(confint(danceabilityModel_2010))
+
+```
+
+> In order to build an initial model, we first run a logistic regression of just danceability on the target variable. We then make it more complex by adding the remaing regressors to a base model below. 
+
+```{r Building a base model for Target}
+Model_1960 <- glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_1960, family= "binomial")
+summary(Model_1960)
+exp(coef(Model_1960))
+exp(confint(Model_1960))
+
+Model_1990 <- glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_1990, family= "binomial")
+summary(Model_1990)
+exp(coef(Model_1990))
+exp(confint(Model_1990))
+
+Model_2010 <- glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_2010, family= "binomial")
+summary(Model_2010)
+exp(coef(Model_2010))
+exp(confint(Model_2010))
+
+```
+
+> By considering the signficance levels, and applying a minimum of 0.05 for all 3 models, we can remove some variables; 
+
+1. 1960 Model: Removing 'Valence'
+2. 1990 Model: Removing 'Time_signature', 'Sections', 'Chorus_hit' (It is insignificant after improving the model in the next step in iteration 1)
+3. 2010 Model: Removing 'Speechiness', 'Key, 'Liveness', 'Chorus_hit', 'Sections'
+
+
+```{r Improved Models}
+Model_1960_final <- glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_1960, family= "binomial")
+summary(Model_1960_final)
+exp(coef(Model_1960_final))
+exp(confint(Model_1960_final))
+
+Model_1990_final <- glm(target ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms, data = songs_decade_1990, family= "binomial")
+summary(Model_1990_final)
+exp(coef(Model_1990_final))
+exp(confint(Model_1990_final))
+
+Model_2010_final <- glm(target ~ danceability + acousticness + energy + loudness + mode + instrumentalness + valence + tempo + duration_ms + time_signature, data = songs_decade_2010, family= "binomial")
+summary(Model_2010_final)
+exp(coef(Model_2010_final))
+exp(confint(Model_2010_final))
+
+```
+
+> Here we can read the coefficients as log-odds. In 1960 for example, for every 1 unit increase in Danceability, the log-odds of a songs being a success increases by 1.69. But log odds are not very readable - an odds ratio is much more intuitive. One thing to note here is that the p values are significant for our newly improved model.
+
+> In order to gain the odds-ratio, we need to take the exponent on the coefficients. Here, in 1960, for every one unit increase in Danceability, the song is 5.39 times more likely to be a success than a flop. In 2010, for every one unit increase in Danceability, the song is 24.3 times more likely to be a success than a flop! Thus, Danceability is much more important now than it was in the past. 
+
+> By looking at the confidence intervals, we see that the lower bound in 1960 is 3.8 times more likely and the upper bound is 7.7 times more likely. In 2010, this confidence interval is [14.9, 40], and thus trends to much higher effect with confidence. 
+
+
+> Looking at how the the different variables led to musical success over time (by considering odds ratios), we cant help but notice the 3 main themes for each decade. 
+
+> 1. 1960-1970: Danceability is the most important factor (5.39), with the energy (3.247) and the mode (2.355) coming in as close second and third place. 
+
+> 2. 1990-2000: It is only danceability (1669) that matters here to a large extent. The effects of Mode (1.19) and Loudness (1.18) are dwarfed by Danceability, but come in as second and third. Interestingly Energy has now dropped off, and it is now negative. The types of songs that were popular here signify the drop of death metal-style songs with high energy towards cleaner songs with better overall rhythm stability and regularity (which are more danceable). 
+
+> 3. 2010-2019: Danceability (24.3) remains king (although its importance returns to non-absurd levels), but there is a new kid on the block - time signature (1.74). This measure shows how many beats are in each bar. This is interesting as we now see that people generally like faster music rather than slower ones in our generation compared to what was in style in the 1990s or 1960s. This seems intuitive but to see it in the actual data was quite nice. Loudness (1.46) comes in at third place with a higher odds ratio than in 1990, showing that we also generally like louder songs over quieter songs nowadays. 
+
+# Logistic Regression Model Visualization
+
+```{r Visualizing the Models effects}
+library(jtools)
+summ(Model_1960_final)
+summ(Model_1990_final)
+summ(Model_2010_final)
+
+plot_summs(Model_1960_final, Model_1990_final, Model_2010_final, plot.distributions = TRUE, coefs = c("danceability", "energy", "mode", "loudness", "time_signature"), model.names = c("1960-1970", "1990-2000", "2010-2019"), legend.title = "Decades") #plotting log-odds (coefficients to visualize these effects )
+```
+
+> By visualizing the model coefficients (log-odds) we now see the pattern a little closer. In every decade, Danceability is the most important factor for muscial success. While energy may be have been important in the 1960s (death metal), it is now negatively impacting musical success. Time signature, loudness, and mode are also important. 
+
+> In 1960, a song needed high energy as well (think death metal)
+
+> In 1990, people loved danceability like crazy, nothing else really mattered to them. Energy lost its appeal, and cleaner songs came into vogue → better overall rhythm stability and regularity, which are more danceable
+
+> In 2010, human beings collectively decided there was more to music than just dancing. Factors like time signature: i.e. how many beats are in each bar, and loudness started becoming more important 
+
+
+# Diagnostics and significance check
+
+```{r Testing Variable contribution to model }
+library(aod)
+wald.test(b = coef(Model_1960_final), Sigma = vcov(Model_1960_final), Terms = 2:15) #Excluding the intercept
+
+wald.test(b = coef(Model_1990_final), Sigma = vcov(Model_1990_final), Terms = 2:12)
+
+wald.test(b = coef(Model_2010_final), Sigma = vcov(Model_2010_final), Terms = 2:10)
+```
+
+> As a final check, we do a Wald Test to check variable significance. Since the P value of the Wald test for all 3 models is less than 0.05, we can conclude that our model is well fit now.  
+
+# Prediction Model Building - how well can we predict the next hit?
+
+> How can we check if the model works in the real world? How do we know that this model does not just fit our sample well, but also generalises to new data? We can check this using Cross Validation. We will be employing a version of cross validation called K-fold cross validation. Cross validation will involve splitting the data into subsets - training sets and test sets. We will apply the model we build from our training set onto our test set and see the fit of it. The idea here is that the songs that are in our training sets are not there in our test sets, creating the notion that we are testing the model with new data. 
+
+> In K fold validation what we do is essentially make 'k' number of training subsets in the data along with a corresponding 'k' number of testing subsets, and run this testing process for each pair, thus preventing any single sample bias at a point in the data. This measure will then be an aggregate measure similar to an average of all those (k) validations. 
+
+> So in summary, to see the effectiveness of the model, we can split the dataset, a large part of it for the training dataset and then a small part of it as a testing dataset, which would be excluded from the training dataset. We would then train a model on the training dataset and see how well it can predict values on the testing dataset. This is cross validation. K fold cross validation takes it to the next level, by essentially repeating this process k number of times and coming up with an average aggregate model which is a really good representation of a hollistic predictive model. We will finally use this model to test our accuracy. 
+
+## Cross validation
+
+```{r Cross Validation}
+
+library(caret)
+crossValSettings <- trainControl(method = "repeatedcv", number = 10,
+                                 savePredictions = TRUE) #repeating the tests k = 10 number of times and then saving each iteration
+
+crossVal1960 <- train(as.factor(target) ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + tempo + duration_ms + time_signature + chorus_hit + sections, data = songs_decade_1960, family= "binomial", method = "glm", trControl = crossValSettings) #We need to convert our dependent variable to a factor. We are using the train() function to create our training model and applying the settings of the cross validation method, which takes 10 iterations of training and testing datasets to build an aggregate, average model 
+
+crossVal1990 <- train(as.factor(target) ~ danceability + acousticness + speechiness + energy + key + loudness + mode + instrumentalness + liveness + valence + tempo + duration_ms, data = songs_decade_1990, family= "binomial", method = "glm", trControl = crossValSettings)
+
+crossVal2010 <- train(as.factor(target) ~ danceability + acousticness + energy + loudness + mode + instrumentalness + valence + tempo + duration_ms + time_signature, data = songs_decade_2010, family= "binomial", method = "glm", trControl = crossValSettings)
+
+crossVal1960 
+
+```
+
+> In order to understand the cross validation process it best to look at an example from the output above. In the 1960 model we see that there were 8642 samples, 14 predictors, 10 folds, and roughly ~7778 observations were there in each training set and the remaining observations (~800) were used as our test set, repeated at different points in the data, 10 times.  
+
+## Confusion Matrix
+
+> One of the best ways to test predictive power is a confusion matrix. This matrix has the true positives, true negatives, false positives, and false negatives all together. This enables us to gain an idea of the true and hollistic accuracy of the model. 
+
+```{r Confusion Matrix}
+pred1960 <- predict(crossVal1960, newdata = songs_decade_1960)
+pred1990 <- predict(crossVal1990, newdata = songs_decade_1990)
+pred2010 <- predict(crossVal2010, newdata = songs_decade_2010)
+
+pred1960
+
+songs_decade_1960 <- songs_decade_1960 %>% 
+  mutate(target = as.factor(target)) #Converting the prediction and the reference variables to the same format - factors 
+songs_decade_1990 <- songs_decade_1990 %>% 
+  mutate(target = as.factor(target))
+songs_decade_2010 <- songs_decade_2010 %>% 
+  mutate(target = as.factor(target))
+
+confusionMatrix(data = pred1960, songs_decade_1960$target) #Creating a confusion matrix with the predictions from above and also specifying that it is the target variable that we are trying to predict
+confusionMatrix(data = pred1990, songs_decade_1990$target)
+confusionMatrix(data = pred2010, songs_decade_2010$target)
+```
+
+> Pred1960 above has applied our CrossVal1960 training model (the average model that is produced after our 10 validations) to our original dataset (1960 songs) for testing, and it predits if a song is a success or not. This is a lot of entries, and so the above output of Pred1960 is just a snippet. 
+
+> We then use the predict values to build a confusion matrix for all 3 decades. As an illustration, consider the 1960 confusion matrix: What we see here is that a total of 2871 + 3409 = 6280 values were predicted correctly out of a total of 8642 observations. This lends itself to a 72.67% accuracy rate. Noting down the accuracy rates of the different aggregate models to predict a successful song in its time; 
+
+> 1960 model accuracy: 72.67% 
+1990 model accuracy: 80.38%
+2010 model accuracy: 80.82% 
+
+>Thus, all models are quite strong, with the strongest being the latest model, the 2010 model. Thus, it should be a standard model to be used in the current day. 
+
+## Visualizating predictability (ROC Curves)
+
+> Finally, we visualize predictive power using a ROC curve. 
+
+> As per Wikipedia's definition: “An ROC Curve is a graphical plot that illustrates the diagnostic ability of a binary classifier system as its discrimination threshold is varied”
+
+> In the diagram below, The blue line is our best model → further we are from the diagonal, the better the model. As an illustration, the area under the curve for our 2010-2019 model (see end of section) =  0.87 and the accuracy of our model = 80.82%
+
+
+```{r Visualizing Predictability: 1960 ROC Curve}
+library(ROCR)
+probFull1960 <- predict(Model_1960_final, songs_decade_1960, type = "response") #take the songs dataset, use the model, and predict the value of the target. If an individual value is closer to 1 than 0, the song is predicted to be a success.
+predictFull1960 <- prediction(probFull1960, songs_decade_1960$target) #generating the data that ROCR needed to make a ROC curve 
+perfFull1960 <- performance(predictFull1960, measure = "tpr", x.measure = "fpr") #calculates false positive, true positive etc rates (performance measures)
+
+probDanceability1960 <- predict(danceabilityModel_1960, songs_decade_1960, type = "response") #Doing the same thing, now for the very initial single variable danceability model we did earlier at the very start
+predictDanceability1960 <- prediction(probDanceability1960, songs_decade_1960$target) 
+perfDanceability1960 <- performance(predictDanceability1960, measure = "tpr", x.measure = "fpr") 
+
+plot(perfFull1960, col = "blue")
+plot(perfDanceability1960, add = TRUE) #Just plot the line on top of the one we've already plotted
+
+AUC <- performance(predictFull1960, measure = "auc") 
+AUCDanceability <- performance(predictDanceability1960, measure = "auc") 
+
+AUC@y.values #Using the @ to subset only the y values (area under the curve in this case)
+AUCDanceability@y.values
+```
+
+> A good way to visualize the predictive powers of a model is by using a Receiver Operator Curve (A ROC curve). The way to read this, is that if the model line is on the diagonal, our model is no better than a "best guess" model. As we get further away from the diagonal, the better the model is. So our full models (blue lines) are pretty good - true positive rates are quite high relative to the false positive rates. If we compare that to the model with just Danceability regressed on the target repose variable, we see it is far closer to the diagonal. 
+
+> We can also look at the area under the curve to quantify the accuracy - the greater the area under the curve, the more accurate your model is. If the area under the curve = 0.5, then it would be on the diagonal. So in our case, the 1960 full model has an area under the ROC curve of 0.8 and the 1960 Danceability only model has an area under the curve of 0.6. 
+
+```{r Visualizing Predictability: 1990 ROC Curve}
+probFull1990 <- predict(Model_1990_final, songs_decade_1990, type = "response") 
+predictFull1990 <- prediction(probFull1990, songs_decade_1990$target) 
+perfFull1990 <- performance(predictFull1990, measure = "tpr", x.measure = "fpr")
+probDanceability1990 <- predict(danceabilityModel_1990, songs_decade_1990, type = "response") 
+predictDanceability1990 <- prediction(probDanceability1990, songs_decade_1990$target) 
+perfDanceability1990 <- performance(predictDanceability1990, measure = "tpr", x.measure = "fpr") 
+plot(perfFull1990, col = "blue")
+plot(perfDanceability1990, add = TRUE)
+AUC <- performance(predictFull1990, measure = "auc") 
+AUCDanceability <- performance(predictDanceability1990, measure = "auc") 
+AUC@y.values
+AUCDanceability@y.values
+```
+
+```{r Visualizing Predictability: 2010 ROC Curve}
+probFull2010 <- predict(Model_2010_final, songs_decade_2010, type = "response") 
+predictFull2010 <- prediction(probFull2010, songs_decade_2010$target) 
+perfFull2010 <- performance(predictFull2010, measure = "tpr", x.measure = "fpr")
+probDanceability2010 <- predict(danceabilityModel_2010, songs_decade_2010, type = "response") 
+predictDanceability2010 <- prediction(probDanceability2010, songs_decade_2010$target) 
+perfDanceability2010 <- performance(predictDanceability2010, measure = "tpr", x.measure = "fpr") 
+plot(perfFull2010, col = "blue")
+plot(perfDanceability2010, add = TRUE)
+AUC <- performance(predictFull2010, measure = "auc") 
+AUCDanceability <- performance(predictDanceability2010, measure = "auc") 
+AUC@y.values
+AUCDanceability@y.values
+```
+
+> In the case of 1990 and 2010 as well, we see the blue full model line fitting far better than the black partial line, and we see a slight improvement in accuracy as the area under the full model curve improves to 0.88 and 0.87 in 1990 and 2010 respectively.  
+
+
+# Conclusion
+
+> The Danceability of a song has been the timeless, unmatched variable that has led to the most musical success - make your song Danceable, and you would be likely to succeed. In more recent times, issues like the rhythm stability, time signature, and loudness have all also become more and more important. 
+
+> Building a model is great, but the actual commercial use of these models comes in its prediction power (found using K-fold cross validation on our datasets). So we can use the 2010 model to predict which songs will be successful, invest in those artists, diagnose why some artists are not ‘making it’ and advise clients on how to improve their success in music. 
+We can also cater to different audiences - if a singer is trying to appeal to the “boomer generation” that listens to 90’s songs, we now know to just increase the danceability (as defined in our project as high tempo amongst other variables). 
+
+> What went wrong, how we can improve, and advice to future students: Conducting a logistic regression was new to all of us. We had to explore, find new information, meet with Sebastian to get advice, and iteratively build on our model. On the actual project, song tastes change all the time! We tried to capture this by adding a ‘time’ element to our analysis, but sometimes, people change their tastes every 2-3 years, not by decade. If we had an entire year to build this project, we could have dived a little deeper: deciphering more granular trends as well as genre-by-genre analysis.
+
+> Thank you so much for going through this journey of exploring what makes a song successful with us. We hope this inspires you to take this project to the next level and explore even deeper trend in this amazing and important industry of music. 
