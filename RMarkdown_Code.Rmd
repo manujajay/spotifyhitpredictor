@@ -1,6 +1,5 @@
 ---
-title: "Spotify Hit Predictor - Group 27"
-author: "Group 27"
+title: "Spotify Hit Predictor"
 date: "`r Sys.Date()`"
 output:
   html_document:
